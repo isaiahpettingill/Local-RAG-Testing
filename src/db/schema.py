@@ -12,7 +12,7 @@ from src.db.connection import (
 def create_knowledgebase_schema() -> None:
     with get_knowledgebase_conn() as conn:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, text TEXT, vector BLOB)"
+            "CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, text TEXT, vector BLOB, url TEXT)"
         )
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, content='chunks', content_rowid='id')"
@@ -26,6 +26,7 @@ def create_ingestion_queue_schema() -> None:
             CREATE TABLE IF NOT EXISTS ingestion_queue (
                 chunk_id INTEGER PRIMARY KEY,
                 raw_text TEXT NOT NULL,
+                url TEXT,
                 status TEXT NOT NULL DEFAULT 'PENDING',
                 graph_extraction_attempts INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -86,6 +87,30 @@ def create_staging_schema() -> None:
                 edge_id INTEGER PRIMARY KEY,
                 from_url TEXT NOT NULL,
                 to_url TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS staging_entities (
+                entity_id INTEGER PRIMARY KEY,
+                page_id INTEGER NOT NULL,
+                entity_name TEXT NOT NULL,
+                entity_type TEXT,
+                properties TEXT,
+                source_page TEXT,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (page_id) REFERENCES staging_pages(page_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS staging_entity_edges (
+                edge_id INTEGER PRIMARY KEY,
+                from_entity TEXT NOT NULL,
+                to_entity TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                source_page TEXT,
                 status TEXT NOT NULL DEFAULT 'PENDING',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )

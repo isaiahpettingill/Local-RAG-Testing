@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 @click.command()
 @click.option(
     "--phase",
-    type=click.Choice(["ingest", "eval", "grade", "crawl", "stage"]),
+    type=click.Choice(["ingest", "eval", "grade", "crawl", "stage", "extract"]),
     required=True,
 )
 @click.option("--batch-size", type=int, default=1)
@@ -79,6 +79,8 @@ def main(
         stage_pages()
         stage_edges()
         load_staging_to_ingestion()
+    elif phase == "extract":
+        run_entity_extraction_loop(batch_size, dry_run)
 
 
 def run_ingestion_loop(batch_size: int, dry_run: bool) -> None:
@@ -94,10 +96,10 @@ def run_ingestion_loop(batch_size: int, dry_run: bool) -> None:
             continue
         try:
             vector = embed_query(row.raw_text)
-            insert_chunk(row.raw_text, vector)
+            insert_chunk(row.raw_text, vector, row.url or "")
             triples = extract_graph(row.raw_text)
             if triples:
-                insert_graph_data(triples)
+                insert_graph_data(triples, source_url=row.url)
             mark_ingestion_completed(row.chunk_id)
             log.info(f"Completed chunk_id={row.chunk_id}")
         except Exception as e:
@@ -163,6 +165,58 @@ def run_grade_loop(batch_size: int, dry_run: bool) -> None:
             log.info(f"Graded eval_id={row.eval_id}")
         except Exception as e:
             log.error(f"Error grading eval_id={row.eval_id}: {e}")
+
+
+def run_entity_extraction_loop(batch_size: int, dry_run: bool) -> None:
+    from src.ingestion.entity_extract import extract_entities_and_relations
+    from src.ingestion.staging import (
+        get_unprocessed_pages,
+        stage_entities,
+        stage_entity_edges,
+    )
+
+    log.info("Starting entity extraction loop")
+    while True:
+        pages = get_unprocessed_pages(limit=batch_size)
+        if not pages:
+            log.info("No pending pages for entity extraction")
+            break
+        for page in pages:
+            log.info(f"Extracting entities from {page['url']}")
+            if dry_run:
+                mark_page_extracted(page["page_id"])
+                continue
+            try:
+                entities, relations = extract_entities_and_relations(
+                    text=page["text"],
+                    page_url=page["url"],
+                    outgoing_links=[page.get("link", "")] if page.get("link") else [],
+                )
+
+                entities_data = [
+                    {**e.to_dict(), "page_url": page["url"]} for e in entities
+                ]
+                relations_data = [r.to_dict() for r in relations]
+
+                stage_entities(entities_data)
+                stage_entity_edges(relations_data)
+                mark_page_extracted(page["page_id"])
+                log.info(
+                    f"Extracted {len(entities)} entities and {len(relations)} relations from {page['url']}"
+                )
+            except Exception as e:
+                log.error(f"Error extracting entities from {page['url']}: {e}")
+
+
+def mark_page_extracted(page_id: int) -> None:
+    from src.db.connection import get_staging_conn
+
+    with get_staging_conn() as conn:
+        conn.execute(
+            "UPDATE staging_pages SET status = 'EXTRACTED' WHERE page_id = ?",
+            (page_id,),
+        )
+        conn.commit()
 
 
 if __name__ == "__main__":

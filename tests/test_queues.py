@@ -6,10 +6,15 @@ from src.db.queues import IngestionRow, EvalRow
 
 def test_ingestion_row_namedtuple():
     row = IngestionRow(
-        chunk_id=1, raw_text="test", status="PENDING", graph_extraction_attempts=0
+        chunk_id=1,
+        raw_text="test",
+        url="https://coppermind.net/wiki/Test",
+        status="PENDING",
+        graph_extraction_attempts=0,
     )
     assert row.chunk_id == 1
     assert row.raw_text == "test"
+    assert row.url == "https://coppermind.net/wiki/Test"
     assert row.status == "PENDING"
     assert row.graph_extraction_attempts == 0
 

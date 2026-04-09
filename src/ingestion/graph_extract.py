@@ -24,11 +24,15 @@ def extract_graph(text: str) -> list[dict[str, Any]]:
         return []
 
 
-def insert_graph_data(triples: list[dict[str, Any]]) -> None:
+def insert_graph_data(
+    triples: list[dict[str, Any]], source_url: str | None = None
+) -> None:
     client = get_ladybug_conn()
     for triple in triples:
+        properties = f"{{source: '{source_url}'}}" if source_url else ""
         client.execute(
             f"MERGE (a:Entity {{name: '{triple['source']}'}}) "
             f"MERGE (b:Entity {{name: '{triple['target']}'}}) "
             f"MERGE (a)-[r:{triple['type']}]->(b)"
+            + (f" SET r += {properties}" if properties else "")
         )

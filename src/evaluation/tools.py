@@ -22,7 +22,9 @@ def search_knowledge(keywords: str) -> str:
     hybrid_results = reciprocal_rank_fusion(
         fts_results, vec_results, limit=RECIPROCAL_RANK_FUSION_LIMIT
     )
-    return "\n".join([f"[Source: {r['id']}] {r['text']}" for r in hybrid_results])
+    return "\n".join(
+        [f"[Source: {r['id']}] {r['text']} ({r['url']})" for r in hybrid_results]
+    )
 
 
 @tool
