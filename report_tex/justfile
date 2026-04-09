@@ -1,0 +1,15 @@
+default := "build"
+
+# Compile the main TeX document with tectonic
+build:
+    mkdir -p out
+    tectonic lastname_firstname_title.tex --outdir out/
+
+# Watch for changes and recompile
+watch:
+    watchexec -e tex,bib,sty -- just build
+
+# Clean build artifacts
+clean:
+    rm -rf out/
+    rm -f *.aux *.bbl *.blg *.log *.out *.synctex.gz

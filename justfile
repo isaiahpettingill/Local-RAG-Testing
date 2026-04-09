@@ -39,6 +39,10 @@ dashboard:
 dashboard-edit:
     marimo edit notebooks/dashboard.py
 
+# Compile the LaTeX report PDF
+report:
+    cd report_tex && just build
+
 # Install dependencies
 install:
     uv sync

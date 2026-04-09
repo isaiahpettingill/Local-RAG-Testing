@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# LaTeX build artifacts
+report_tex/out/

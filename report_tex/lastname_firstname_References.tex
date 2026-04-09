@@ -1,0 +1,36 @@
+%
+% File lastname_firstname_References.tex
+%
+% Contact: dkdougal@byu.edu
+%%
+%% Based on the style files for ACL-2015 and ACL-2019
+
+\documentclass[11pt,table,xcdraw]{article}
+\usepackage[hyperref]{tex_styles/acl2019_no_nums}
+
+\usepackage{import}
+\import{./}{tex_styles/preamble.tex}
+
+\graphicspath{{images/}}
+
+\title{Research References}
+
+\author{Your Name \\
+  Linguistics 581, Section 002, Winter 2025 \\
+  Submitted to Professor Dougal \\
+  Department of Linguistics \\
+  Brigham Young University \\
+  {\tt your.email@byu.edu} }
+
+\begin{document}
+
+\maketitle
+
+\today
+
+% This will automatically generate the References section. You do not need to add a References section manually.
+\nocite{*}
+\bibliographystyle{bib_styles/acl_natbib}
+\bibliography{biblio}
+
+\end{document}
