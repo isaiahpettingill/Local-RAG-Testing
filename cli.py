@@ -96,10 +96,10 @@ def run_ingestion_loop(batch_size: int, dry_run: bool) -> None:
             continue
         try:
             vector = embed_query(row.raw_text)
-            insert_chunk(row.raw_text, vector, row.url or "")
+            chunk_id = insert_chunk(row.raw_text, vector, row.url or "")
             triples = extract_graph(row.raw_text)
             if triples:
-                insert_graph_data(triples, source_url=row.url)
+                insert_graph_data(triples, source_url=row.url, chunk_id=chunk_id)
             mark_ingestion_completed(row.chunk_id)
             log.info(f"Completed chunk_id={row.chunk_id}")
         except Exception as e:

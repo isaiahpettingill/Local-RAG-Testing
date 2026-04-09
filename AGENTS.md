@@ -201,7 +201,6 @@ All Python dependencies are declared in `pyproject.toml`. Do not add dependencie
 
 Current core dependencies:
 
-- `lancedb` — vector database (already in pyproject.toml)
 - `llama-index` — indexing and retrieval orchestration
 - `llama-index-graph-stores-ladybug` — Ladybug graph store integration
 - `openai` — API client (for structured output grading)

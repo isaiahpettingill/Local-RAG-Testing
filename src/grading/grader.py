@@ -19,6 +19,30 @@ class GradeResult:
         }
 
 
+GRADING_CRITERIA = """
+## Grading Rubric
+
+The grader evaluates answers on three criteria:
+
+1. **Accurate** (faithfulness): Does the answer correctly use facts from the provided context?
+   - Answer must NOT contradict any information in the context
+   - Answer must NOT introduce external facts not present in context
+   - Score: true if faithful, false if contradictory or contains external facts
+
+2. **Correct Synthesis**: Does the answer address the query comprehensively?
+   - Answer must directly address what was asked
+   - Answer must synthesize relevant information from context
+   - Score: true if addresses query well, false if off-topic or incomplete
+
+3. **No Hallucination**: Is every claim in the answer grounded in the context?
+   - Each factual claim must be verifiable in the provided context
+   - No made-up entities, dates, statistics, or statements
+   - Score: true if all claims grounded, false if any ungrounded claim
+
+Return JSON with fields: accurate (bool), correct_synthesis (bool), no_hallucination (bool).
+"""
+
+
 def grade_answer(
     query: str, ground_truth: str, answer: str, context: str
 ) -> GradeResult:
@@ -30,8 +54,7 @@ def grade_answer(
         f"Query: {query}\n"
         f"Ground Truth: {ground_truth}\n"
         f"Answer: {answer}\n"
-        f"Context: {context}\n\n"
-        "Return JSON with fields: accurate (bool), correct_synthesis (bool), no_hallucination (bool)."
+        f"Context: {context}\n\n" + GRADING_CRITERIA
     )
     result = grader.completion(prompt)
     try:

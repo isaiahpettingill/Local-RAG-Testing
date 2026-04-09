@@ -43,3 +43,12 @@ MODELS = {
 
 SQLITE_VEC_DIMENSION = 384
 RECIPROCAL_RANK_FUSION_LIMIT = 3
+
+# Local LLM Routing
+OPENAI_BASE_URL = "http://localhost:8080/v1"
+OPENAI_API_KEY = "local-no-key"
+
+import os
+
+os.environ["OPENAI_BASE_URL"] = OPENAI_BASE_URL
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY

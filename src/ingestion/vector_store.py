@@ -26,7 +26,7 @@ def insert_chunk(text: str, vector: list[float], url: str) -> int:
 def execute_fts(query: str, limit: int = 5) -> list[dict[str, Any]]:
     with get_knowledgebase_conn() as conn:
         rows = conn.execute(
-            "SELECT rowid, text, url FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT ?",
+            "SELECT rowid, text, url FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT ?",
             (query, limit),
         ).fetchall()
         return [{"id": r["rowid"], "text": r["text"], "url": r["url"]} for r in rows]

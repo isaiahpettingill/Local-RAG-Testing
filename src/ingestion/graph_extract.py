@@ -25,11 +25,19 @@ def extract_graph(text: str) -> list[dict[str, Any]]:
 
 
 def insert_graph_data(
-    triples: list[dict[str, Any]], source_url: str | None = None
+    triples: list[dict[str, Any]], source_url: str | None = None, chunk_id: int | None = None
 ) -> None:
     client = get_ladybug_conn()
     for triple in triples:
-        properties = f"{{source: '{source_url}'}}" if source_url else ""
+        props = {}
+        if source_url:
+            props["source"] = source_url
+        if chunk_id:
+            props["chunk_id"] = chunk_id
+        
+        properties_str = ", ".join([f"{k}: '{v}'" for k, v in props.items()])
+        properties = f" {{ {properties_str} }}" if properties_str else ""
+
         client.execute(
             f"MERGE (a:Entity {{name: '{triple['source']}'}}) "
             f"MERGE (b:Entity {{name: '{triple['target']}'}}) "
