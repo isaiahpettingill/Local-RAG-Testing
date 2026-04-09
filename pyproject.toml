@@ -34,4 +34,5 @@ packages = ["src/db", "src/evaluation", "src/grading", "src/ingestion", "src/mod
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "ty>=0.0.29",
 ]

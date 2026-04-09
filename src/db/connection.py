@@ -40,8 +40,10 @@ def get_staging_conn() -> SQLiteConnection:
     return SQLiteConnection(STAGING_DB)
 
 
-def get_ladybug_conn() -> "Client":
+def get_ladybug_conn():
     from src.models.config import LADYBUGDB_DIR
-    from real_ladybug import Client
+    from real_ladybug import Database
+    from real_ladybug.connection import Connection
 
-    return Client(LADYBUGDB_DIR.as_posix())
+    db = Database(LADYBUGDB_DIR.as_posix())
+    return Connection(db)

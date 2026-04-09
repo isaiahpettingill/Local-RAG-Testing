@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import click
 
@@ -18,8 +17,6 @@ from src.db.queues import (
 from src.ingestion.embed import embed_query
 from src.ingestion.vector_store import insert_chunk
 from src.ingestion.graph_extract import extract_graph, insert_graph_data
-from src.ingestion.crawler import crawl
-from src.ingestion.staging import stage_pages, stage_edges
 from src.evaluation.pipelines import run_pipeline_a, run_pipeline_b, run_pipeline_c
 from src.grading.grader import grade_answer, compute_score
 

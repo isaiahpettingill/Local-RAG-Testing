@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 
 def test_pipeline_a_signature():

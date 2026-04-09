@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 
 from src.db.connection import (
     get_eval_queue_conn,
@@ -113,6 +112,14 @@ def create_staging_schema() -> None:
                 source_page TEXT,
                 status TEXT NOT NULL DEFAULT 'PENDING',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS crawl_state (
+                url TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'DISCOVERED',
+                discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                visited_at TIMESTAMP
             )
         """)
         conn.commit()

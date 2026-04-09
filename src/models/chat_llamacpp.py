@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from llama_cpp import Llama
+from llama_cpp import Llama, ChatCompletionRequestMessage
 
 from src.models.config import MODELS
 
@@ -29,12 +29,20 @@ class ChatLlamaCpp:
 
     def chat(self, messages: list[dict[str, str]]) -> str:
         llm = self._get_instance()
-        response = llm.create_chat_completion(messages=messages)  # type: ignore[arg-type]
-        return response["choices"][0]["message"]["content"]  # type: ignore[index]
+        formatted: list[ChatCompletionRequestMessage] = cast(
+            list[ChatCompletionRequestMessage],
+            [{"role": "user", "content": m["content"]} for m in messages],
+        )
+        # stream=False returns the non-streaming response type
+        response = llm.create_chat_completion(messages=formatted, stream=False)
+        result = response["choices"][0]["message"]["content"]  # type: ignore
+        return result if result else ""
 
     def completion(self, prompt: str) -> str:
         llm = self._get_instance()
-        return llm(prompt)["choices"][0]["text"]  # type: ignore[index]
+        response = llm(prompt, stream=False)
+        result = response["choices"][0]["text"]  # type: ignore
+        return result if result else ""
 
 
 _embedding_model: ChatLlamaCpp | None = None

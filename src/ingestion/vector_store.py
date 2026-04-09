@@ -4,7 +4,6 @@ import struct
 from typing import Any
 
 from src.db.connection import get_knowledgebase_conn
-from src.models.config import SQLITE_VEC_DIMENSION
 
 
 def insert_chunk(text: str, vector: list[float], url: str) -> int:

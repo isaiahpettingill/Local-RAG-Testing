@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 from src.ingestion.entity_extract import ExtractedEntity, EntityRelation
 
 

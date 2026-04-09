@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import time
 from pathlib import Path
@@ -11,7 +12,11 @@ from urllib.parse import urljoin, urlparse, urldefrag
 import requests
 from requests.exceptions import RequestException
 
+from src.db.connection import get_staging_conn
+
 log = logging.getLogger(__name__)
+
+HEADERS = {"User-Agent": "FanOfBrandon"}
 
 COPPERMIND_BASE = "https://coppermind.net"
 COPPERMIND_WIKI = f"{COPPERMIND_BASE}/wiki"
@@ -19,9 +24,11 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 CRAWL_DATA_DIR = DATA_DIR / "crawl"
 CRAWL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+MD_DIR = CRAWL_DATA_DIR / "markdown"
+MD_DIR.mkdir(exist_ok=True)
+
 PAGES_FILE = CRAWL_DATA_DIR / "pages.jsonl"
 GRAPH_FILE = CRAWL_DATA_DIR / "graph_edges.jsonl"
-LINKS_FILE = CRAWL_DATA_DIR / "discovered_links.json"
 ROBOTS_FILE = CRAWL_DATA_DIR / "robots.txt"
 
 DISALLOWED_PATTERNS = [
@@ -29,9 +36,14 @@ DISALLOWED_PATTERNS = [
     r"/mw/",
     r"/wiki/Special:",
     r"/wiki/special%3A",
+    r"\?diff",
+    r"\?oldid=",
 ]
 
-SLEEP_INTERVAL = 1.0
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico", ".bmp")
+
+MIN_SLEEP = 0.1
+MAX_SLEEP = 0.5
 
 
 class CrawledPage(NamedTuple):
@@ -64,6 +76,8 @@ def _load_robots() -> set[str]:
 
 
 def _is_allowed(path: str) -> bool:
+    if path.lower().endswith(IMAGE_EXTENSIONS):
+        return False
     for pattern in DISALLOWED_PATTERNS:
         if re.search(pattern, path):
             return False
@@ -84,7 +98,7 @@ def _normalize_url(url: str) -> tuple[str, str | None]:
 
 
 def _fetch_page(url: str) -> tuple[str, str, list[str]]:
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     html = resp.text
 
@@ -111,45 +125,92 @@ def _fetch_page(url: str) -> tuple[str, str, list[str]]:
     return title, text, links
 
 
-def _load_discovered() -> set[str]:
-    if LINKS_FILE.exists():
-        return set(json.loads(LINKS_FILE.read_text()))
-    return set()
+def _write_markdown(url: str, title: str, text: str, links: list[str]) -> None:
+    slug = urlparse(url).path.split("/")[-1] or "index"
+    slug = slug.replace("%", "-").replace(":", "-").replace("/", "_")
+
+    md_content = f"""# {title}
+
+{text}
+
+---
+Source: {url}
+
+Links: {len(links)} outgoing
+"""
+    (MD_DIR / f"{slug}.md").write_text(md_content)
 
 
-def _save_discovered(links: set[str]) -> None:
-    LINKS_FILE.write_text(json.dumps(list(links)))
+def _get_discovered_urls(limit: int = 100) -> list[str]:
+    with get_staging_conn() as conn:
+        cur = conn.execute(
+            "SELECT url FROM crawl_state WHERE status = 'DISCOVERED' LIMIT ?",
+            (limit,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def _mark_visited(url: str) -> None:
+    with get_staging_conn() as conn:
+        conn.execute(
+            "UPDATE crawl_state SET status = 'VISITED', visited_at = CURRENT_TIMESTAMP WHERE url = ?",
+            (url,),
+        )
+        conn.commit()
+
+
+def _add_discovered_urls(urls: list[str]) -> None:
+    with get_staging_conn() as conn:
+        for url in urls:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO crawl_state (url, status) VALUES (?, 'DISCOVERED')",
+                    (url,),
+                )
+            except Exception:
+                pass
+        conn.commit()
+
+
+def _count_visited() -> int:
+    with get_staging_conn() as conn:
+        cur = conn.execute("SELECT COUNT(*) FROM crawl_state WHERE status = 'VISITED'")
+        return cur.fetchone()[0]
 
 
 def crawl(start_path: str = "/wiki/Main_Page", limit: int | None = None) -> None:
     robots_disallowed = _load_robots()
-    discovered = _load_discovered()
-    discovered.add(start_path)
-    visited: set[str] = set()
+    _add_discovered_urls([start_path])
     count = 0
 
     log.info("Starting crawl from %s", start_path)
 
-    while discovered:
-        path = discovered.pop()
-        if path in visited:
-            continue
+    while True:
+        with get_staging_conn() as conn:
+            cur = conn.execute(
+                "SELECT url FROM crawl_state WHERE status = 'DISCOVERED' LIMIT 1"
+            )
+            row = cur.fetchone()
+            if not row:
+                break
+            url = row[0]
+            path = url.replace(COPPERMIND_BASE, "")
+
         parsed = urlparse(path)
-        if parsed.path in robots_disallowed or not _is_allowed(path):
-            visited.add(path)
+        if parsed.path in robots_disallowed or not _is_allowed(parsed.path):
+            _mark_visited(url)
             continue
 
-        url = urljoin(COPPERMIND_BASE, path)
         log.info("Crawling %s", url)
 
         try:
             title, text, links = _fetch_page(url)
             page_links: list[str] = []
+            new_urls: list[str] = []
             for link in links:
                 normalized, frag = _normalize_url(urljoin(COPPERMIND_BASE, link))
                 if normalized:
-                    if normalized not in visited:
-                        discovered.add(normalized)
+                    new_urls.append(normalized)
                     if frag:
                         page_links.append(f"{normalized}#{frag}")
                     else:
@@ -164,25 +225,28 @@ def crawl(start_path: str = "/wiki/Main_Page", limit: int | None = None) -> None
             with PAGES_FILE.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(page._asdict(), ensure_ascii=False) + "\n")
 
+            _write_markdown(url, title, text, page_links)
+
             if page_links:
                 with GRAPH_FILE.open("a", encoding="utf-8") as f:
                     for link in page_links:
                         f.write(json.dumps({"from": url, "to": link}) + "\n")
 
-            visited.add(path)
+            _add_discovered_urls(new_urls)
+            _mark_visited(url)
             count += 1
-            log.info("Crawled %d pages", count)
+            visited_count = _count_visited()
+            log.info("Crawled %d pages (visited: %d)", count, visited_count)
 
             if limit and count >= limit:
                 log.info("Reached limit %d", limit)
                 break
 
-            _save_discovered(discovered)
-            time.sleep(SLEEP_INTERVAL)
+            time.sleep(random.uniform(MIN_SLEEP, MAX_SLEEP))
 
         except RequestException as e:
             log.error("Failed to fetch %s: %s", url, e)
-            visited.add(path)
+            _mark_visited(url)
             continue
 
     log.info("Crawl complete. Crawled %d pages", count)

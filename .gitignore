@@ -11,3 +11,12 @@ wheels/
 
 # LaTeX build artifacts
 report_tex/out/
+
+# Crawled data
+data/crawl/markdown/
+data/crawl/*.json
+data/crawl/*.jsonl
+
+# SQLite databases
+data/*.db
+data/ladybugdb/

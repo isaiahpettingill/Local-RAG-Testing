@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
@@ -48,7 +49,5 @@ RECIPROCAL_RANK_FUSION_LIMIT = 3
 OPENAI_BASE_URL = "http://localhost:8080/v1"
 OPENAI_API_KEY = "local-no-key"
 
-import os
-
-os.environ["OPENAI_BASE_URL"] = OPENAI_BASE_URL
+os.environ["OPENAI_BASE_URL"] = OPENAI_BASE_URL  # noqa: E402
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
