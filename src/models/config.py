@@ -7,6 +7,7 @@ KNOWLEDGEBASE_DB = DATA_DIR / "knowledgebase.db"
 LADYBUGDB_DIR = DATA_DIR / "ladybugdb"
 EVAL_QUEUE_DB = DATA_DIR / "eval_queue.db"
 INGESTION_QUEUE_DB = DATA_DIR / "ingestion_queue.db"
+STAGING_DB = DATA_DIR / "staging.db"
 
 LADYBUGDB_DIR.mkdir(exist_ok=True)
 

@@ -31,3 +31,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/db", "src/evaluation", "src/grading", "src/ingestion", "src/models"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

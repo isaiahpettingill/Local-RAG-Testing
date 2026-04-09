@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-from src.models.chat_llamacpp import ChatLlamaCpp
-
 
 class GradeResult:
     def __init__(
@@ -24,6 +22,8 @@ class GradeResult:
 def grade_answer(
     query: str, ground_truth: str, answer: str, context: str
 ) -> GradeResult:
+    from src.models.chat_llamacpp import ChatLlamaCpp
+
     grader = ChatLlamaCpp("grader")
     prompt = (
         "You are grading a RAG system answer. Evaluate the following answer against the ground truth.\n"

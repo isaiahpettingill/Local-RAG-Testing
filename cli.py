@@ -18,6 +18,8 @@ from src.db.queues import (
 from src.ingestion.embed import embed_query
 from src.ingestion.vector_store import insert_chunk
 from src.ingestion.graph_extract import extract_graph, insert_graph_data
+from src.ingestion.crawler import crawl
+from src.ingestion.staging import stage_pages, stage_edges
 from src.evaluation.pipelines import run_pipeline_a, run_pipeline_b, run_pipeline_c
 from src.grading.grader import grade_answer, compute_score
 
@@ -30,11 +32,24 @@ log = logging.getLogger(__name__)
 
 
 @click.command()
-@click.option("--phase", type=click.Choice(["ingest", "eval", "grade"]), required=True)
+@click.option(
+    "--phase",
+    type=click.Choice(["ingest", "eval", "grade", "crawl", "stage"]),
+    required=True,
+)
 @click.option("--batch-size", type=int, default=1)
 @click.option("--model-path", type=click.Path(exists=True), default=None)
 @click.option("--dry-run", is_flag=True, default=False)
-def main(phase: str, batch_size: int, model_path: str | None, dry_run: bool) -> None:
+@click.option("--limit", type=int, default=None)
+@click.option("--start-path", default="/wiki/Main_Page")
+def main(
+    phase: str,
+    batch_size: int,
+    model_path: str | None,
+    dry_run: bool,
+    limit: int | None,
+    start_path: str,
+) -> None:
     if model_path:
         from src.models.config import MODELS
 
@@ -50,6 +65,20 @@ def main(phase: str, batch_size: int, model_path: str | None, dry_run: bool) -> 
         run_eval_loop(batch_size, dry_run)
     elif phase == "grade":
         run_grade_loop(batch_size, dry_run)
+    elif phase == "crawl":
+        from src.ingestion.crawler import crawl as run_crawl
+
+        run_crawl(start_path=start_path, limit=limit)
+    elif phase == "stage":
+        from src.ingestion.staging import (
+            stage_pages,
+            stage_edges,
+            load_staging_to_ingestion,
+        )
+
+        stage_pages()
+        stage_edges()
+        load_staging_to_ingestion()
 
 
 def run_ingestion_loop(batch_size: int, dry_run: bool) -> None:

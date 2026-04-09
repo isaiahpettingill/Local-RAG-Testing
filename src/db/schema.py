@@ -63,3 +63,31 @@ def init_all_schemas() -> None:
     create_knowledgebase_schema()
     create_ingestion_queue_schema()
     create_eval_queue_schema()
+    create_staging_schema()
+
+
+def create_staging_schema() -> None:
+    from src.db.connection import get_staging_conn
+
+    with get_staging_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS staging_pages (
+                page_id INTEGER PRIMARY KEY,
+                url TEXT UNIQUE NOT NULL,
+                title TEXT,
+                text TEXT,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS staging_edges (
+                edge_id INTEGER PRIMARY KEY,
+                from_url TEXT NOT NULL,
+                to_url TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()

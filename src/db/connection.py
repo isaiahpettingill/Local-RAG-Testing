@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import ContextManager
 
-from src.models.config import KNOWLEDGEBASE_DB, EVAL_QUEUE_DB, INGESTION_QUEUE_DB
+from src.models.config import KNOWLEDGEBASE_DB, EVAL_QUEUE_DB, INGESTION_QUEUE_DB  # noqa: F401
 
 
 class SQLiteConnection(ContextManager):
@@ -32,6 +32,12 @@ def get_eval_queue_conn() -> SQLiteConnection:
 
 def get_ingestion_queue_conn() -> SQLiteConnection:
     return SQLiteConnection(INGESTION_QUEUE_DB)
+
+
+def get_staging_conn() -> SQLiteConnection:
+    from src.models.config import STAGING_DB
+
+    return SQLiteConnection(STAGING_DB)
 
 
 def get_ladybug_conn() -> "Client":

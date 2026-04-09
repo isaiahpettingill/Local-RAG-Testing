@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from llama_cpp import Llama
-from llama_cpp.llama_chat_completion import LlamaChatCompletionMessage
 
 from src.models.config import MODELS
 
@@ -30,12 +29,12 @@ class ChatLlamaCpp:
 
     def chat(self, messages: list[dict[str, str]]) -> str:
         llm = self._get_instance()
-        response = llm.create_chat_completion(messages=messages)
-        return response["choices"][0]["message"]["content"]
+        response = llm.create_chat_completion(messages=messages)  # type: ignore[arg-type]
+        return response["choices"][0]["message"]["content"]  # type: ignore[index]
 
     def completion(self, prompt: str) -> str:
         llm = self._get_instance()
-        return llm(prompt)["choices"][0]["text"]
+        return llm(prompt)["choices"][0]["text"]  # type: ignore[index]
 
 
 _embedding_model: ChatLlamaCpp | None = None
