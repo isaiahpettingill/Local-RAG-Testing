@@ -11,7 +11,7 @@ Resilient multi-strategy RAG evaluation system. Evaluates three generative pipel
 - `real-ladybug>=0.15.3`: Ladybug runtime/integration package.
 - `sqlite-vec>=0.1.0`: Vector ANN search extension for SQLite.
 
-Note: LanceDB is NOT used. Storage relies exclusively on SQLite with sqlite-vec for vector similarity and FTS5 with BM25 for keyword search.
+Note: Storage relies exclusively on SQLite with sqlite-vec for vector similarity and FTS5 with BM25 for keyword search.
 
 ## Models
 
@@ -127,14 +127,24 @@ local_rag/
 
 ## Citations
 
+To cite this project, please use the following BibTeX entry:
+
+```
+@ misc{Pettingill2025LocalRAG,
+  author = {Isaiah Pettingill},
+  title = {Local RAG: Resilient Multi-Strategy Retrieval-Augmented Generation Evaluation},
+  year = {2025},
+  howpublished = {\url{https://github.com/isaiahjp/local_rag}},
+  note = {Local RAG evaluation system}
+}
+```
+
 This project builds on the following works:
 
 ```
-Pettingill, I. (2025). Local RAG: Resilient Multi-Strategy Retrieval-Augmented Generation Evaluation. https://github.com/isaiahjp/local_rag
-
 Anthropic. (2024). Introducing Contextual Retrieval. https://www.anthropic.com/engineering/contextual-retrieval
 
 Google. (2025). Gemini API Documentation. https://ai.google.dev/gemini-api/docs
 ```
 
-See `CITATIONS.bib` for BibTeX entries.
+See `CITATIONS.bib` for additional BibTeX entries.
