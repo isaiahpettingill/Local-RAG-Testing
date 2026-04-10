@@ -22,7 +22,11 @@ def test_build_context_prompt_includes_metadata():
 def test_build_contextual_chunks_uses_generated_context(monkeypatch):
     import src.ingestion.contextual_pipeline as pipeline
 
-    monkeypatch.setattr(pipeline, "chunk_text", lambda text, chunk_size=1000, chunk_overlap=200: ["chunk one", "chunk two"])
+    monkeypatch.setattr(
+        pipeline,
+        "chunk_text",
+        lambda text, chunk_size=1000, chunk_overlap=200: ["chunk one", "chunk two"],
+    )
     monkeypatch.setattr(
         pipeline,
         "_generate_chunk_context",
