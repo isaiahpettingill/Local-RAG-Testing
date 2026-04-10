@@ -2,19 +2,51 @@ from __future__ import annotations
 
 
 from src.db.connection import (
+    get_crawl_conn,
     get_eval_queue_conn,
     get_ingestion_queue_conn,
     get_knowledgebase_conn,
 )
 
 
+def _ensure_columns(conn, table: str, columns: dict[str, str]) -> None:
+    existing = {
+        row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
 def create_knowledgebase_schema() -> None:
     with get_knowledgebase_conn() as conn:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, text TEXT, vector BLOB, url TEXT)"
+            """
+            CREATE TABLE IF NOT EXISTS chunks (
+                id INTEGER PRIMARY KEY,
+                text TEXT,
+                raw_text TEXT NOT NULL DEFAULT '',
+                context TEXT NOT NULL DEFAULT '',
+                vector BLOB,
+                url TEXT NOT NULL DEFAULT '',
+                source_title TEXT NOT NULL DEFAULT '',
+                chunk_index INTEGER NOT NULL DEFAULT 0
+            )
+            """
         )
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, content='chunks', content_rowid='id')"
+        )
+        _ensure_columns(
+            conn,
+            "chunks",
+            {
+                "raw_text": "TEXT NOT NULL DEFAULT ''",
+                "context": "TEXT NOT NULL DEFAULT ''",
+                "url": "TEXT NOT NULL DEFAULT ''",
+                "source_title": "TEXT NOT NULL DEFAULT ''",
+                "chunk_index": "INTEGER NOT NULL DEFAULT 0",
+            },
         )
         conn.commit()
 
@@ -26,12 +58,16 @@ def create_ingestion_queue_schema() -> None:
                 chunk_id INTEGER PRIMARY KEY,
                 raw_text TEXT NOT NULL,
                 url TEXT,
+                source_title TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'PENDING',
                 graph_extraction_attempts INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        _ensure_columns(
+            conn, "ingestion_queue", {"source_title": "TEXT NOT NULL DEFAULT ''"}
+        )
         conn.commit()
 
 
@@ -64,6 +100,8 @@ def init_all_schemas() -> None:
     create_ingestion_queue_schema()
     create_eval_queue_schema()
     create_staging_schema()
+    create_crawl_schema()
+    migrate_crawl_state()
 
 
 def create_staging_schema() -> None:
@@ -114,6 +152,11 @@ def create_staging_schema() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
+
+
+def create_crawl_schema() -> None:
+    with get_crawl_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS crawl_state (
                 url TEXT PRIMARY KEY,
@@ -123,3 +166,27 @@ def create_staging_schema() -> None:
             )
         """)
         conn.commit()
+
+
+def migrate_crawl_state() -> None:
+    from src.db.connection import get_staging_conn
+
+    with get_staging_conn() as staging, get_crawl_conn() as crawl:
+        staging_has_table = staging.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'crawl_state'"
+        ).fetchone()
+        if not staging_has_table:
+            return
+
+        rows = staging.execute(
+            "SELECT url, status, discovered_at, visited_at FROM crawl_state ORDER BY url"
+        ).fetchall()
+        for row in rows:
+            crawl.execute(
+                """
+                INSERT OR IGNORE INTO crawl_state (url, status, discovered_at, visited_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (row["url"], row["status"], row["discovered_at"], row["visited_at"]),
+            )
+        crawl.commit()

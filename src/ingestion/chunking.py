@@ -12,6 +12,12 @@ def chunk_text(
     if not text:
         return []
 
+    if chunk_size <= 0:
+        return []
+
+    if chunk_overlap >= chunk_size:
+        chunk_overlap = max(0, chunk_size - 1)
+
     if len(text) <= chunk_size:
         return [text]
 

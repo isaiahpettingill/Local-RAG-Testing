@@ -13,6 +13,7 @@ wheels/
 report_tex/out/
 
 # Crawled data
+data/
 data/crawl/markdown/
 data/crawl/*.json
 data/crawl/*.jsonl

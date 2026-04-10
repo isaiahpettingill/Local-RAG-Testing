@@ -6,15 +6,32 @@ from typing import Any
 from src.db.connection import get_knowledgebase_conn
 
 
-def insert_chunk(text: str, vector: list[float], url: str) -> int:
+def insert_chunk(
+    text: str,
+    vector: list[float],
+    url: str,
+    source_title: str = "",
+    chunk_index: int = 0,
+    raw_text: str = "",
+    context: str = "",
+) -> int:
     with get_knowledgebase_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM chunks WHERE url = ? AND chunk_index = ? ORDER BY id DESC LIMIT 1",
+            (url, chunk_index),
+        ).fetchone()
+
+        if existing is not None:
+            return int(existing["id"])
+
         cursor = conn.execute(
-            "INSERT INTO chunks (text, vector, url) VALUES (?, ?, ?)",
-            (text, _pack_vector(vector), url),
+            "INSERT INTO chunks (text, raw_text, context, vector, url, source_title, chunk_index) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (text, raw_text, context, _pack_vector(vector), url, source_title, chunk_index),
         )
         chunk_id_raw = cursor.lastrowid
         assert chunk_id_raw is not None
         chunk_id: int = chunk_id_raw
+
         conn.execute(
             "INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)", (chunk_id, text)
         )

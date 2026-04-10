@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-This project evaluates three generative pipelines locally to measure the empirical value of Full-Text Search (FTS) and Graph retrieval against a raw LLM baseline. The system must run entirely on local hardware, split into distinct offline and runtime phases, and support start/stop/resume at any time without data loss.
+This project evaluates three generative pipelines locally to measure the empirical value of Anthropic-style Contextual Retrieval and Graph retrieval against a raw LLM baseline. The system must run entirely on local hardware, split into distinct offline and runtime phases, and support start/stop/resume at any time without data loss.
 
 ---
 
@@ -17,7 +17,7 @@ This project evaluates three generative pipelines locally to measure the empiric
 Evaluate three generative pipelines:
 
 - **Pipeline A (Baseline)**: Prompt → LLM
-- **Pipeline B (Hybrid RAG Agent)**: Prompt → LangChain Tool (`search_knowledge`) → SQLite (FTS5 + Vector) → LLM
+- **Pipeline B (Contextual RAG Agent)**: Prompt → LangChain Tool (`search_knowledge`) → SQLite (contextual chunks + FTS5 + Vector) → LLM
 - **Pipeline C (GraphRAG Agent)**: Prompt → LangChain Tool (`get_relationships`) → LadybugDB → LLM
 
 ### 2. Dataset Selection
@@ -35,7 +35,7 @@ Evaluate three generative pipelines:
 | Dashboard / Monitor | marimo | Reactive, read-only dashboard to monitor SQLite queue progress in real-time and visualize metrics. |
 | Orchestration | LangChain | Handles chunking, embedding, and binds Python tools natively to local models. |
 | Model Serving | ChatLlamaCpp | Hardware-accelerated local inference for both the 2B Agent and 26B Grader. |
-| Vector / FTS DB | SQLite + sqlite-vec | Handles Vector ANN and native BM25 search (FTS5). |
+| Vector / FTS DB | SQLite + sqlite-vec | Stores contextualized chunks and handles Vector ANN plus native BM25 search (FTS5). |
 | Graph DB | LadybugDB | Embedded columnar property graph. |
 
 ### 4. Model Configuration
@@ -96,21 +96,21 @@ Each phase runs as an idempotent loop via a CLI script. Scripts can be run in th
 
 #### Phase 1: Data Preparation & Offline Ingestion (Overnight Run)
 
-**Goal**: Populate the Vector/BM25 database and construct the LadybugDB graph.
+**Goal**: Populate the contextual chunk store, Vector/BM25 database, and construct the LadybugDB graph.
 
 **Execution Loop** (`python cli.py --phase ingest`):
 
 1. `SELECT * FROM ingestion_queue WHERE status = 'PENDING' LIMIT 1`
 2. Update row to `PROCESSING`.
-3. Generate embedding via `embeddinggemma-300M` → Insert to SQLite.
-4. Call Gemma 4 26B with LangChain's `LLMGraphTransformer` to extract Nodes/Edges → Insert to LadybugDB.
+3. Generate a chunk-level contextual summary using the 26B model, prepend it to the raw chunk, then embed the contextualized text and insert it into SQLite.
+4. Call Gemma 4 26B with the graph extraction pipeline to extract Nodes/Edges from the contextualized chunk → Insert to LadybugDB.
 5. Update row to `COMPLETED`. Commit transaction.
 
 On restart, the script re-queries `PENDING` and resumes.
 
 #### Phase 2: Agent Execution (The A/B Test)
 
-**Goal**: Use the 2B model to answer queries through all three pipelines.
+**Goal**: Use the 2B model to answer queries through all three pipelines, with Pipeline B grounded in contextualized chunks.
 
 **Model**: Gemma 4 E2B 8bit GGML equipped with LangChain tools.
 
@@ -138,14 +138,14 @@ On restart, the script re-queries `PENDING` and resumes.
 
 ### 8. LangChain Tools Reference
 
-These tools are bound to the 2B agent model during Phase 2.
+These tools are bound to the 2B agent model during Phase 2 and return citation-formatted strings.
 
 #### Tool 1: `search_knowledge`
 
 ```python
 @tool
 def search_knowledge(keywords: str) -> str:
-    """Search the knowledge base for general info. Combines Vector + BM25."""
+    """Search contextualized knowledge base passages and return citation-formatted strings."""
     query_vector = embeddings.embed_query(keywords)
     fts_results = execute_fts(db_conn, keywords)
     vec_results = execute_vector(db_conn, query_vector)
@@ -158,7 +158,7 @@ def search_knowledge(keywords: str) -> str:
 ```python
 @tool
 def get_entity_relationships(entity_name: str) -> str:
-    """Find everything a specific entity is directly related to."""
+    """Find entity relationships in LadybugDB and return citation-formatted strings."""
     query = f"MATCH (a {{name: '{entity_name}'}})-[r]-(b) RETURN a.name, TYPE(r), b.name, r.source_id LIMIT 5"
     df = lb_conn.execute(query).get_as_df()
     return "\n".join([f"[Source: {r['source_id']}] {r['a.name']} {r['TYPE(r)']} {r['b.name']}" for _, r in df.iterrows()])

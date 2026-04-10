@@ -8,12 +8,14 @@ def test_ingestion_row_namedtuple():
         chunk_id=1,
         raw_text="test",
         url="https://coppermind.net/wiki/Test",
+        source_title="Test",
         status="PENDING",
         graph_extraction_attempts=0,
     )
     assert row.chunk_id == 1
     assert row.raw_text == "test"
     assert row.url == "https://coppermind.net/wiki/Test"
+    assert row.source_title == "Test"
     assert row.status == "PENDING"
     assert row.graph_extraction_attempts == 0
 

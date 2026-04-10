@@ -136,20 +136,35 @@ def load_staging_to_ingestion() -> int:
     count = 0
     with get_staging_conn() as staging, get_ingestion_queue_conn() as queue:
         rows = staging.execute(
-            "SELECT page_id, url, text FROM staging_pages WHERE status = 'PENDING' ORDER BY page_id"
+            "SELECT page_id, url, title, text FROM staging_pages WHERE status = 'PENDING' ORDER BY page_id"
         ).fetchall()
         for row in rows:
             queue.execute(
                 """
-                INSERT OR IGNORE INTO ingestion_queue (raw_text, url, status)
-                VALUES (?, ?, 'PENDING')
+                INSERT OR IGNORE INTO ingestion_queue (raw_text, url, source_title, status)
+                VALUES (?, ?, ?, 'PENDING')
                 """,
-                (row["text"], row["url"]),
+                (row["text"], row["url"], row["title"] or ""),
             )
             count += 1
         queue.commit()
     log.info("Loaded %d pages to ingestion queue", count)
     return count
+
+
+def get_outgoing_links(page_url: str, limit: int = 25) -> list[str]:
+    with get_staging_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT to_url
+            FROM staging_edges
+            WHERE from_url = ?
+            ORDER BY edge_id
+            LIMIT ?
+            """,
+            (page_url, limit),
+        ).fetchall()
+        return [row["to_url"] for row in rows]
 
 
 def get_unprocessed_pages(limit: int = 10) -> list[dict]:

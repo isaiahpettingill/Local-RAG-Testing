@@ -1,6 +1,6 @@
 # Local RAG
 
-Resilient multi-strategy RAG evaluation system. Evaluates three generative pipelines locally to measure the empirical value of FTS and Graph retrieval against a raw LLM baseline.
+Resilient multi-strategy RAG evaluation system. Evaluates three generative pipelines locally to measure the empirical value of Anthropic-style Contextual Retrieval and Graph retrieval against a raw LLM baseline.
 
 ## Installed Packages
 
@@ -29,7 +29,7 @@ All database files are stored under `data/` in the repo root.
 
 | Path | Purpose |
 |---|---|
-| `data/knowledgebase.db` | SQLite FTS5 + sqlite-vec |
+| `data/knowledgebase.db` | SQLite FTS5 + sqlite-vec with contextualized chunks |
 | `data/ladybugdb/` | LadybugDB graph store |
 | `data/eval_queue.db` | SQLite evaluation queue |
 | `data/ingestion_queue.db` | SQLite ingestion queue |
@@ -53,7 +53,7 @@ chunks = chunk_text(text, chunk_size=1000, chunk_overlap=200)
 The system implements three retrieval strategies evaluated in Phase 2:
 
 1. **Pipeline A (Baseline)**: Raw LLM - no retrieval, LLM answers from internal knowledge
-2. **Pipeline B (FTS)**: Full-text search using SQLite FTS5 with BM25 ranking
+2. **Pipeline B (Contextual RAG)**: Chunk-level contextual summaries prepended before SQLite FTS5 + vector retrieval
 3. **Pipeline C (Graph)**: Knowledge graph retrieval via LadybugDB entity relationships
 
 Hybrid retrieval is supported via reciprocal rank fusion (RRF) combining FTS and vector search results.

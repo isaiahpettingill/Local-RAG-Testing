@@ -14,9 +14,7 @@ from src.db.queues import (
     claim_pending_grade,
     update_grader_scores,
 )
-from src.ingestion.embed import embed_query
-from src.ingestion.vector_store import insert_chunk
-from src.ingestion.graph_extract import extract_graph, insert_graph_data
+from src.ingestion.contextual_pipeline import ingest_row
 from src.evaluation.pipelines import run_pipeline_a, run_pipeline_b, run_pipeline_c
 from src.grading.grader import grade_answer, compute_score
 
@@ -83,25 +81,29 @@ def main(
 def run_ingestion_loop(batch_size: int, dry_run: bool) -> None:
     log.info("Starting ingestion loop")
     while True:
-        row = claim_pending_ingestion()
-        if row is None:
+        rows = []
+        for _ in range(max(1, batch_size)):
+            row = claim_pending_ingestion()
+            if row is None:
+                break
+            rows.append(row)
+
+        if not rows:
             log.info("No pending ingestion jobs")
             break
-        log.info(f"Processing chunk_id={row.chunk_id}")
-        if dry_run:
-            mark_ingestion_completed(row.chunk_id)
-            continue
-        try:
-            vector = embed_query(row.raw_text)
-            chunk_id = insert_chunk(row.raw_text, vector, row.url or "")
-            triples = extract_graph(row.raw_text)
-            if triples:
-                insert_graph_data(triples, source_url=row.url, chunk_id=chunk_id)
-            mark_ingestion_completed(row.chunk_id)
-            log.info(f"Completed chunk_id={row.chunk_id}")
-        except Exception as e:
-            log.error(f"Error processing chunk_id={row.chunk_id}: {e}")
-            mark_ingestion_error(row.chunk_id, row.graph_extraction_attempts + 1)
+
+        for row in rows:
+            log.info(f"Processing chunk_id={row.chunk_id}")
+            if dry_run:
+                mark_ingestion_completed(row.chunk_id)
+                continue
+            try:
+                ingest_row(row)
+                mark_ingestion_completed(row.chunk_id)
+                log.info(f"Completed chunk_id={row.chunk_id}")
+            except Exception as e:
+                log.error(f"Error processing chunk_id={row.chunk_id}: {e}")
+                mark_ingestion_error(row.chunk_id, row.graph_extraction_attempts + 1)
 
 
 def run_eval_loop(batch_size: int, dry_run: bool) -> None:
@@ -165,44 +167,8 @@ def run_grade_loop(batch_size: int, dry_run: bool) -> None:
 
 
 def run_entity_extraction_loop(batch_size: int, dry_run: bool) -> None:
-    from src.ingestion.entity_extract import extract_entities_and_relations
-    from src.ingestion.staging import (
-        get_unprocessed_pages,
-        stage_entities,
-        stage_entity_edges,
-    )
-
-    log.info("Starting entity extraction loop")
-    while True:
-        pages = get_unprocessed_pages(limit=batch_size)
-        if not pages:
-            log.info("No pending pages for entity extraction")
-            break
-        for page in pages:
-            log.info(f"Extracting entities from {page['url']}")
-            if dry_run:
-                mark_page_extracted(page["page_id"])
-                continue
-            try:
-                entities, relations = extract_entities_and_relations(
-                    text=page["text"],
-                    page_url=page["url"],
-                    outgoing_links=[page.get("link", "")] if page.get("link") else [],
-                )
-
-                entities_data = [
-                    {**e.to_dict(), "page_url": page["url"]} for e in entities
-                ]
-                relations_data = [r.to_dict() for r in relations]
-
-                stage_entities(entities_data)
-                stage_entity_edges(relations_data)
-                mark_page_extracted(page["page_id"])
-                log.info(
-                    f"Extracted {len(entities)} entities and {len(relations)} relations from {page['url']}"
-                )
-            except Exception as e:
-                log.error(f"Error extracting entities from {page['url']}: {e}")
+    log.info("Legacy extract phase now routes through contextual ingestion")
+    run_ingestion_loop(batch_size, dry_run)
 
 
 def mark_page_extracted(page_id: int) -> None:

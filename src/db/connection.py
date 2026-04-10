@@ -4,7 +4,12 @@ import sqlite3
 from pathlib import Path
 from typing import ContextManager
 
-from src.models.config import KNOWLEDGEBASE_DB, EVAL_QUEUE_DB, INGESTION_QUEUE_DB  # noqa: F401
+from src.models.config import (  # noqa: F401
+    KNOWLEDGEBASE_DB,
+    EVAL_QUEUE_DB,
+    INGESTION_QUEUE_DB,
+    CRAWL_DB,
+)
 
 
 class SQLiteConnection(ContextManager):
@@ -38,6 +43,10 @@ def get_staging_conn() -> SQLiteConnection:
     from src.models.config import STAGING_DB
 
     return SQLiteConnection(STAGING_DB)
+
+
+def get_crawl_conn() -> SQLiteConnection:
+    return SQLiteConnection(CRAWL_DB)
 
 
 def get_ladybug_conn():

@@ -7,12 +7,12 @@ import re
 import time
 from pathlib import Path
 from typing import NamedTuple
-from urllib.parse import urljoin, urlparse, urldefrag
+from urllib.parse import unquote, urljoin, urlparse, urldefrag
 
 import requests
 from requests.exceptions import RequestException
 
-from src.db.connection import get_staging_conn
+from src.db.connection import get_crawl_conn
 
 log = logging.getLogger(__name__)
 
@@ -34,11 +34,16 @@ ROBOTS_FILE = CRAWL_DATA_DIR / "robots.txt"
 DISALLOWED_PATTERNS = [
     r"/w/",
     r"/mw/",
-    r"/wiki/Special:",
-    r"/wiki/special%3A",
     r"\?diff",
     r"\?oldid=",
 ]
+
+IGNORED_NAMESPACE_PREFIXES = (
+    "Special:",
+    "Talk:",
+    "User:",
+    "User talk:",
+)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico", ".bmp")
 
@@ -76,12 +81,28 @@ def _load_robots() -> set[str]:
 
 
 def _is_allowed(path: str) -> bool:
-    if path.lower().endswith(IMAGE_EXTENSIONS):
+    path_no_query = path.split("?", 1)[0]
+    if path_no_query.lower().endswith(IMAGE_EXTENSIONS):
         return False
+    normalized_path = (
+        unquote(path_no_query.removeprefix("/wiki/")).replace(" ", "_").casefold()
+    )
+    for prefix in IGNORED_NAMESPACE_PREFIXES:
+        if normalized_path.startswith(prefix.replace(" ", "_").casefold()):
+            return False
     for pattern in DISALLOWED_PATTERNS:
         if re.search(pattern, path):
             return False
     return True
+
+
+def _is_disallowed_query(query: str) -> bool:
+    return (
+        query.startswith("action")
+        or query.startswith("oldver")
+        or query.startswith("oldid")
+        or query.startswith("diff")
+    )
 
 
 def _normalize_url(url: str) -> tuple[str, str | None]:
@@ -93,6 +114,10 @@ def _normalize_url(url: str) -> tuple[str, str | None]:
         return "", None
     path = parsed.path
     if not path.startswith("/wiki/"):
+        return "", None
+    if _is_disallowed_query(parsed.query):
+        return "", None
+    if not _is_allowed(parsed.path):
         return "", None
     return cleaned, frag
 
@@ -142,7 +167,7 @@ Links: {len(links)} outgoing
 
 
 def _get_discovered_urls(limit: int = 100) -> list[str]:
-    with get_staging_conn() as conn:
+    with get_crawl_conn() as conn:
         cur = conn.execute(
             "SELECT url FROM crawl_state WHERE status = 'DISCOVERED' LIMIT ?",
             (limit,),
@@ -151,7 +176,7 @@ def _get_discovered_urls(limit: int = 100) -> list[str]:
 
 
 def _mark_visited(url: str) -> None:
-    with get_staging_conn() as conn:
+    with get_crawl_conn() as conn:
         conn.execute(
             "UPDATE crawl_state SET status = 'VISITED', visited_at = CURRENT_TIMESTAMP WHERE url = ?",
             (url,),
@@ -160,7 +185,7 @@ def _mark_visited(url: str) -> None:
 
 
 def _add_discovered_urls(urls: list[str]) -> None:
-    with get_staging_conn() as conn:
+    with get_crawl_conn() as conn:
         for url in urls:
             try:
                 conn.execute(
@@ -173,37 +198,45 @@ def _add_discovered_urls(urls: list[str]) -> None:
 
 
 def _count_visited() -> int:
-    with get_staging_conn() as conn:
+    with get_crawl_conn() as conn:
         cur = conn.execute("SELECT COUNT(*) FROM crawl_state WHERE status = 'VISITED'")
         return cur.fetchone()[0]
 
 
 def crawl(start_path: str = "/wiki/Main_Page", limit: int | None = None) -> None:
     robots_disallowed = _load_robots()
-    _add_discovered_urls([start_path])
+    if _is_allowed(start_path):
+        _add_discovered_urls([start_path])
     count = 0
 
     log.info("Starting crawl from %s", start_path)
 
     while True:
-        with get_staging_conn() as conn:
-            cur = conn.execute(
-                "SELECT url FROM crawl_state WHERE status = 'DISCOVERED' LIMIT 1"
-            )
-            row = cur.fetchone()
-            if not row:
-                break
-            url = row[0]
-            path = url.replace(COPPERMIND_BASE, "")
-
-        parsed = urlparse(path)
-        if parsed.path in robots_disallowed or not _is_allowed(parsed.path):
-            _mark_visited(url)
-            continue
-
-        log.info("Crawling %s", url)
-
+        should_sleep = True
+        url = ""
         try:
+            with get_crawl_conn() as conn:
+                cur = conn.execute(
+                    "SELECT url FROM crawl_state WHERE status = 'DISCOVERED' LIMIT 1"
+                )
+                row = cur.fetchone()
+                if not row:
+                    should_sleep = False
+                    break
+                url = row[0]
+                path = url.replace(COPPERMIND_BASE, "")
+
+            parsed = urlparse(path)
+            if (
+                parsed.path in robots_disallowed
+                or _is_disallowed_query(parsed.query)
+                or not _is_allowed(parsed.path)
+            ):
+                _mark_visited(url)
+                continue
+
+            log.info("Crawling %s", url)
+
             title, text, links = _fetch_page(url)
             page_links: list[str] = []
             new_urls: list[str] = []
@@ -240,14 +273,16 @@ def crawl(start_path: str = "/wiki/Main_Page", limit: int | None = None) -> None
 
             if limit and count >= limit:
                 log.info("Reached limit %d", limit)
+                should_sleep = False
                 break
-
-            time.sleep(random.uniform(MIN_SLEEP, MAX_SLEEP))
 
         except RequestException as e:
             log.error("Failed to fetch %s: %s", url, e)
             _mark_visited(url)
             continue
+        finally:
+            if should_sleep:
+                time.sleep(random.uniform(MIN_SLEEP, MAX_SLEEP))
 
     log.info("Crawl complete. Crawled %d pages", count)
 

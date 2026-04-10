@@ -9,6 +9,7 @@ class IngestionRow(NamedTuple):
     chunk_id: int
     raw_text: str
     url: str | None
+    source_title: str
     status: str
     graph_extraction_attempts: int
 
@@ -32,7 +33,7 @@ class EvalRow(NamedTuple):
 def claim_pending_ingestion() -> IngestionRow | None:
     with get_ingestion_queue_conn() as conn:
         row = conn.execute(
-            "SELECT chunk_id, raw_text, url, status, graph_extraction_attempts "
+            "SELECT chunk_id, raw_text, url, source_title, status, graph_extraction_attempts "
             "FROM ingestion_queue WHERE status = 'PENDING' ORDER BY chunk_id LIMIT 1"
         ).fetchone()
         if row is None:
