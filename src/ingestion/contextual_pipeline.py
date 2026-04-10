@@ -10,6 +10,7 @@ from src.ingestion.embed import embed_query
 from src.ingestion.graph_extract import extract_graph
 from src.ingestion.ladybug_graph import get_entity_relationships as _relationships
 from src.ingestion.ladybug_graph import insert_graph_data
+from src.ingestion.staging import get_outgoing_links
 from src.ingestion.vector_store import (
     execute_fts,
     execute_vector,
@@ -82,7 +83,7 @@ def _generate_chunk_context(
         total_chunks=total_chunks,
     )
     try:
-        model = ChatLlamaCpp("graph_extractor")
+        model = ChatLlamaCpp("graph_summarizer")
         response = model.completion(prompt).strip()
         return response or _fallback_context(title, url, chunk_index, total_chunks)
     except Exception as exc:
@@ -175,7 +176,9 @@ def ingest_row(row: Any) -> None:
     title = getattr(row, "source_title", "") or ""
     url = getattr(row, "url", "") or ""
     raw_text = getattr(row, "raw_text", "") or ""
+    existing_relationships = _relationships(title or url or raw_text[:80], limit=5)
     chunks = build_contextual_chunks(raw_text, title=title, url=url)
+    outgoing_links = get_outgoing_links(url) if url else []
     for chunk in chunks:
         vector = embed_query(chunk.contextual_text)
         chunk_id = insert_chunk(
@@ -191,7 +194,9 @@ def ingest_row(row: Any) -> None:
             chunk.contextual_text,
             title=title,
             page_url=url,
+            outgoing_links=outgoing_links,
             chunk_index=chunk.chunk_index,
+            existing_relationships=existing_relationships,
         )
         insert_graph_data(
             graph,

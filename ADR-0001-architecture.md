@@ -6,7 +6,9 @@ Accepted
 
 ## Context
 
-This project evaluates three generative pipelines locally to measure the empirical value of Anthropic-style Contextual Retrieval and Graph retrieval against a raw LLM baseline. The system must run entirely on local hardware, split into distinct offline and runtime phases, and support start/stop/resume at any time without data loss.
+This project evaluates three generative pipelines locally to measure the empirical value of Anthropic-style Contextual Retrieval and graph retrieval against a raw LLM baseline. The system must run entirely on local hardware, split into distinct offline and runtime phases, and support start/stop/resume at any time without data loss.
+
+The domain is Brandon Sanderson's published works, which span multiple universes, series, books, characters, worlds, factions, magic systems, artifacts, and story events. The graph layer needs to help retrieval, not merely mirror the corpus. It must be simple enough for local models to populate reliably and deterministic enough that the local model never has to author Cypher directly.
 
 ---
 
@@ -22,21 +24,21 @@ Evaluate three generative pipelines:
 
 ### 2. Dataset Selection
 
-- **Dataset**: MultiHop-RAG or HotpotQA (JSONL or CSV) — TBD, user to provide
-- **Rationale**: Queries require multi-hop reasoning (e.g., "What is the name of the company founded by the CEO of X?"), which stresses the GraphRAG pipeline and contrasts Vector Search against Graph Traversal.
+- **Dataset**: Coppermind crawl and staged exports
+- **Rationale**: The corpus contains explicit canonical relationships and cross-work references that make retrieval quality measurable.
 - **Format**: `[document_corpus]` and `[query, ground_truth_answer]`
 
 ### 3. Local Tech Stack
 
 | Component | Recommended Tool | Role |
 |---|---|---|
-| State Tracker / Queue | SQLite | Tracks job status (PENDING, PROCESSING, COMPLETED, ERROR) to enable start/stop resiliency. |
-| Execution Engine | Python CLI (click) | Command-line scripts to trigger resilient batch loops. |
-| Dashboard / Monitor | marimo | Reactive, read-only dashboard to monitor SQLite queue progress in real-time and visualize metrics. |
-| Orchestration | LangChain | Handles chunking, embedding, and binds Python tools natively to local models. |
-| Model Serving | ChatLlamaCpp | Hardware-accelerated local inference for both the 2B Agent and 26B Grader. |
-| Vector / FTS DB | SQLite + sqlite-vec | Stores contextualized chunks and handles Vector ANN plus native BM25 search (FTS5). |
-| Graph DB | LadybugDB | Embedded columnar property graph. |
+| State Tracker / Queue | SQLite | Tracks job status (`PENDING`, `PROCESSING`, `COMPLETED`, `ERROR`) to enable start/stop resiliency. |
+| Execution Engine | Python CLI (`click`) | Command-line scripts to trigger resilient batch loops. |
+| Dashboard / Monitor | `marimo` | Reactive, read-only dashboard to monitor SQLite queue progress in real-time and visualize metrics. |
+| Orchestration | LangChain | Handles chunking, contextualization, embedding, and binds Python tools natively to local models. |
+| Model Serving | `ChatLlamaCpp` | Local inference for the 2B Agent and 26B extraction/grading models. |
+| Vector / FTS DB | SQLite + `sqlite-vec` | Stores contextualized chunks and handles vector ANN plus native BM25 search (FTS5). |
+| Graph DB | LadybugDB | Embedded property graph for canonical entity and relationship storage. |
 
 ### 4. Model Configuration
 
@@ -46,7 +48,7 @@ All models are configured via `src/models/config.py`. The following models are u
 |---|---|---|
 | `embeddinggemma-300M` | Phase 1 embedding generation | Text embedding model |
 | Gemma 4 E2B 8bit (GGML) | Phase 2 agent | 2B parameter model for pipeline execution |
-| Gemma 4 26B | Phase 1 graph extraction + Phase 3 grading | Already stored locally |
+| Gemma 4 26B | Phase 1 contextualization + graph extraction + Phase 3 grading | Used for structured extraction and grading |
 
 ### 5. Database Paths
 
@@ -54,115 +56,246 @@ All database files are stored under `data/` in the repo root:
 
 | File | Purpose |
 |---|---|
-| `data/knowledgebase.db` | SQLite (FTS5 + sqlite-vec) |
+| `data/knowledgebase.db` | SQLite (FTS5 + `sqlite-vec`) |
 | `data/ladybugdb/` | LadybugDB graph store directory |
 | `data/eval_queue.db` | SQLite evaluation queue |
 | `data/ingestion_queue.db` | SQLite ingestion queue |
+| `data/staging.db` | Optional staging data for crawl/extraction workflow |
+| `data/crawl.db` | Crawl discovery/visited state |
 
-### 6. State Preservation & Resiliency — The Job Queue
+### 6. Semantic Knowledge Model
 
-Two SQLite state tables manage the entire workflow idempotently. Python loops strictly pull PENDING jobs, process them, and update status before committing.
+The graph should be a **moderately sized, retrieval-oriented ontology**, not an exhaustive wiki parser.
 
-**Table 1: `ingestion_queue`** (overnight Knowledgebase creation)
+#### 6.1 Design goals
 
-| Column | Type | Notes |
-|---|---|---|
-| `chunk_id` | PK | |
-| `raw_text` | TEXT | |
-| `status` | ENUM | 'PENDING', 'PROCESSING', 'COMPLETED', 'ERROR' |
-| `graph_extraction_attempts` | INT | |
+- Keep the number of node types small enough for the model to classify reliably.
+- Keep relation types limited enough to query predictably.
+- Preserve canonical entities and useful aliases.
+- Store evidence with each edge so the graph remains auditable.
+- Support deterministic graph writes from structured JSON output.
+- Avoid requiring the model to write Cypher or graph traversal code.
 
-**Table 2: `evaluation_queue`** (runtime A/B testing)
+#### 6.2 Canonical node types
 
-| Column | Type | Notes |
-|---|---|---|
-| `eval_id` | PK | |
-| `query` | TEXT | |
-| `ground_truth` | TEXT | |
-| `pipeline_a_status` | ENUM | 'PENDING', 'COMPLETED' |
-| `pipeline_b_status` | ENUM | 'PENDING', 'COMPLETED' |
-| `pipeline_c_status` | ENUM | 'PENDING', 'COMPLETED' |
-| `pipeline_a_result` | TEXT | |
-| `pipeline_b_result` | TEXT | |
-| `pipeline_c_result` | TEXT | |
-| `grader_status` | ENUM | 'PENDING', 'COMPLETED' |
-| `grader_score_a` | REAL | |
-| `grader_score_b` | REAL | |
-| `grader_score_c` | REAL | |
+The graph uses the following primary node types:
 
-### 7. Three-Phase Execution Plan
+- **Universe**: Cosmere, Reckoners, Cytoverse, etc.
+- **Series**: Mistborn Era 1, Stormlight Archive, etc.
+- **Book**: novels, novellas, short stories
+- **World**: Roshar, Scadrial, Nalthis, Sel, etc.
+- **Character**: named characters and major aliases
+- **Faction**: organizations, orders, groups, governments
+- **MagicSystem**: Allomancy, Surgebinding, Awakening, etc.
+- **Artifact**: Shardblades, metalminds, Dawnshards, etc.
+- **Event**: major plot events, wars, oaths, transformations
+- **Concept**: important lore concepts that do not fit a more specific type
 
-Each phase runs as an idempotent loop via a CLI script. Scripts can be run in the background (tmux, nohup). The marimo dashboard queries SQLite to show live progress.
+This is intentionally a moderate ontology. If a concept can be modeled as a Character, World, Series, Book, Faction, MagicSystem, Artifact, or Event, it should use that type. Everything else falls back to `Concept`.
 
-#### Phase 1: Data Preparation & Offline Ingestion (Overnight Run)
+#### 6.3 Canonical edge types
 
-**Goal**: Populate the contextual chunk store, Vector/BM25 database, and construct the LadybugDB graph.
+Keep the edge vocabulary small and deterministic:
+
+- `part_of_universe`
+- `part_of_series`
+- `appears_in_book`
+- `set_on_world`
+- `member_of`
+- `leads`
+- `ally_of`
+- `enemy_of`
+- `mentor_of`
+- `student_of`
+- `family_of`
+- `uses_magic_system`
+- `wields`
+- `associated_with_artifact`
+- `associated_with_event`
+- `originates_from_world`
+- `located_in`
+- `same_as`
+- `alias_of`
+- `mentions`
+- `related_to`
+
+The extractor may output richer labels in its JSON, but the write layer must normalize them to this set.
+
+#### 6.4 Evidence model
+
+Every stored entity and edge should carry source evidence:
+
+- `source_url`
+- `source_title`
+- `chunk_id`
+- `source_chunk_id` if separate from `chunk_id`
+- `support_text`
+- `confidence`
+- `scope` (`canonical`, `inferred`, `speculative`)
+
+This makes retrieval explainable and helps the system rank stronger facts above weaker ones.
+
+#### 6.5 Alias and normalization policy
+
+Sanderson lore contains variants and aliases. The graph must support canonicalization without over-merging.
+
+- Use `same_as` only when the alias is effectively certain.
+- Use `alias_of` for clear naming variants.
+- Prefer a canonical display name with a list of aliases.
+- Keep universe and series membership attached to canonical nodes.
+
+Examples:
+
+- `Thaidakar` may be linked as an alias of a canonical character node when supported.
+- `Nalthis` and `Nalthian` should be normalized carefully: one is a world, the other is an adjective/demonym.
+- Titles and honorifics should not become separate nodes unless they are independently useful.
+
+### 7. Extraction Strategy
+
+The local model should output only structured facts, not graph code.
+
+#### 7.1 Extraction output format
+
+The extraction model returns JSON with three top-level lists:
+
+- `nodes`
+- `edges`
+- `aliases`
+
+Each node contains:
+
+- `name`
+- `type`
+- `properties`
+
+Each edge contains:
+
+- `source`
+- `type`
+- `target`
+- `properties`
+
+Each property bag may include:
+
+- `source_url`
+- `source_title`
+- `chunk_id`
+- `support_text`
+- `confidence`
+- `scope`
+
+#### 7.2 Deterministic write path
+
+The graph write layer must compile structured JSON into graph operations deterministically:
+
+1. Normalize node type and edge type to the approved vocabularies.
+2. Escape values safely.
+3. Generate MERGE/SET statements in code.
+4. Apply writes using a single helper that accepts structured entities and relations.
+5. Never let the model author Cypher.
+
+This ensures the model only needs to solve the semantic extraction problem, not graph syntax.
+
+#### 7.3 Extraction prompts
+
+Prompts should ask the model to focus on:
+
+- the canonical entity mentioned
+- its universe and series membership
+- directly asserted relationships
+- world / faction / magic system associations
+- important events tied to the chunk
+
+Prompts should explicitly discourage:
+
+- exhaustive entity listing
+- speculative relation generation
+- free-form narrative output
+- Cypher or SQL output
+
+### 8. Graph Construction Pipeline
+
+#### 8.1 Ingestion flow
 
 **Execution Loop** (`python cli.py --phase ingest`):
 
-1. `SELECT * FROM ingestion_queue WHERE status = 'PENDING' LIMIT 1`
-2. Update row to `PROCESSING`.
-3. Generate a chunk-level contextual summary using the 26B model, prepend it to the raw chunk, then embed the contextualized text and insert it into SQLite.
-4. Call Gemma 4 26B with the graph extraction pipeline to extract Nodes/Edges from the contextualized chunk → Insert to LadybugDB.
-5. Update row to `COMPLETED`. Commit transaction.
+1. Select the next `PENDING` ingestion row.
+2. Build contextual chunk text from the raw chunk.
+3. Embed the contextualized text and insert it into SQLite.
+4. Extract graph facts from the same contextualized chunk.
+5. Deterministically write nodes and edges into LadybugDB.
+6. Mark the row `COMPLETED`.
 
-On restart, the script re-queries `PENDING` and resumes.
+#### 8.2 Why contextual text comes first
 
-#### Phase 2: Agent Execution (The A/B Test)
+Contextualized chunks improve both vector/FTS retrieval and graph extraction because they give the model enough nearby context to identify the right character, world, or event without hallucinating the broader setting.
 
-**Goal**: Use the 2B model to answer queries through all three pipelines, with Pipeline B grounded in contextualized chunks.
+### 9. Query Strategy
 
-**Model**: Gemma 4 E2B 8bit GGML equipped with LangChain tools.
+#### 9.1 Retrieval from SQLite
 
-**Execution Loop** (`python cli.py --phase eval`):
+`search_knowledge` should retrieve contextualized chunks from the SQLite store using hybrid BM25 + vector ranking.
 
-1. `SELECT * FROM evaluation_queue WHERE pipeline_c_status = 'PENDING' LIMIT 1`
-2. Pass the query to the 2B Agent model.
-3. Agent uses `@tool` calls to query SQLite (Pipeline B) or LadybugDB (Pipeline C).
-4. Agent returns final answer with citations.
-5. Save text string and tool usage context to `evaluation_queue`. Update status. Commit.
+#### 9.2 Retrieval from LadybugDB
 
-#### Phase 3: Automated Grading (Overnight Run)
+`get_entity_relationships` should return a compact citation string for a canonical entity and its high-value neighbors.
 
-**Goal**: Use Gemma 4 26B to grade the 2B model's answers against ground truth.
+#### 9.3 Graph query patterns
 
-**Execution Loop** (`python cli.py --phase grade`):
+The graph layer should support these query patterns efficiently:
 
-1. `SELECT * FROM evaluation_queue WHERE grader_status = 'PENDING' AND pipeline_c_status = 'COMPLETED' LIMIT 1`
-2. Parse query, ground_truth, generated_answer, and cited_context.
-3. Gemma 4 26B uses structured output (JSON) to grade:
-   - `accurate`: Boolean — answer matches the ground truth
-   - `correct_synthesis`: Boolean — answer correctly synthesizes the retrieved context without contradiction
-   - `no_hallucination`: Boolean — answer contains no additional made-up data beyond what is in the context
-4. Update DB with final scores and set `grader_status` to `COMPLETED`. Commit.
+- character-centric neighborhood expansion
+- world-centric retrieval bundles
+- series-to-book lookup
+- universe scoping
+- alias resolution
+- 2-hop relationship paths such as character → faction → world
 
-### 8. LangChain Tools Reference
+### 10. Implementation Constraints
 
-These tools are bound to the 2B agent model during Phase 2 and return citation-formatted strings.
+To keep the system feasible locally:
 
-#### Tool 1: `search_knowledge`
+- Limit node and edge vocabularies.
+- Prefer deterministic code over model-generated graph syntax.
+- Keep graph extraction chunk-local.
+- Avoid requiring full-document global reasoning for every row.
+- Use confidence and scope to filter uncertain facts.
+- Keep all writes idempotent.
+- Never leave queue rows in `PROCESSING` after failure.
 
-```python
-@tool
-def search_knowledge(keywords: str) -> str:
-    """Search contextualized knowledge base passages and return citation-formatted strings."""
-    query_vector = embeddings.embed_query(keywords)
-    fts_results = execute_fts(db_conn, keywords)
-    vec_results = execute_vector(db_conn, query_vector)
-    hybrid_results = reciprocal_rank_fusion(fts_results, vec_results, limit=3)
-    return "\n".join([f"[Source: {r['id']}] {r['text']}" for r in hybrid_results])
-```
+### 11. Consequences
 
-#### Tool 2: `get_entity_relationships`
+#### Positive
 
-```python
-@tool
-def get_entity_relationships(entity_name: str) -> str:
-    """Find entity relationships in LadybugDB and return citation-formatted strings."""
-    query = f"MATCH (a {{name: '{entity_name}'}})-[r]-(b) RETURN a.name, TYPE(r), b.name, r.source_id LIMIT 5"
-    df = lb_conn.execute(query).get_as_df()
-    return "\n".join([f"[Source: {r['source_id']}] {r['a.name']} {r['TYPE(r)']} {r['b.name']}" for _, r in df.iterrows()])
-```
+- The graph is aligned to the domain rather than a generic entity parser.
+- Retrieval can answer character/world/series questions more directly.
+- Local models only need to emit structured facts.
+- Deterministic graph compilation reduces syntax errors and fragile Cypher generation.
+- Evidence-backed edges improve traceability and grading.
+
+#### Negative
+
+- The ontology is intentionally incomplete and will not capture every niche relation.
+- Some relationships will be inferred rather than directly stated.
+- Alias resolution still needs careful tuning.
+- The graph will need periodic schema refinement as new query patterns emerge.
+
+#### Tradeoff
+
+This design sacrifices exhaustive knowledge graph coverage in favor of a graph that is easier to build, easier to query, and much more reliable for local RAG.
+
+### 12. Recommended Initial Scope
+
+Start with the following minimum viable graph:
+
+- 4 node families: `Universe`, `Series`, `Book`, `Character`
+- 4 supporting families: `World`, `Faction`, `MagicSystem`, `Artifact`
+- 3 event/concept families: `Event`, `Concept`, `Alias`
+- 10 to 15 relation types total
+- deterministic write helpers
+- citation-backed edge properties
+
+This is enough to make the graph useful for Sanderson questions without overwhelming the local model.
 
 ---
 
@@ -172,5 +305,7 @@ def get_entity_relationships(entity_name: str) -> str:
 - **Positive**: SQLite-based job queue is simple, portable, and requires no external services.
 - **Positive**: Three distinct pipelines enable empirical comparison of retrieval strategies.
 - **Positive**: Configurable model paths via `src/models/config.py` allows swapping models without code changes.
-- **Negative**: The multi-phase approach requires careful orchestration to ensure Phase 1 completes before Phase 2 begins.
-- **Negative**: The 26B grader model requires significant GPU memory.
+- **Positive**: A constrained semantic ontology makes graph extraction and querying feasible on local hardware.
+- **Negative**: The multi-phase approach requires careful orchestration to ensure ingestion completes before evaluation begins.
+- **Negative**: The graph model intentionally leaves out some long-tail lore relationships.
+- **Negative**: The 26B extraction/grading model requires significant GPU memory.

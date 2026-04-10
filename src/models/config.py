@@ -41,6 +41,14 @@ MODELS = {
         "n_threads": None,
         "n_batch": 512,
     },
+    "graph_summarizer": {
+        "name": "Gemma 4 E4B-it",
+        "path": None,
+        "n_ctx": 8192,
+        "n_gpu_layers": -1,
+        "n_threads": None,
+        "n_batch": 256,
+    },
 }
 
 SQLITE_VEC_DIMENSION = 384
