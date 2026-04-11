@@ -6,6 +6,7 @@ from src.db.queues import IngestionRow, EvalRow
 def test_ingestion_row_namedtuple():
     row = IngestionRow(
         chunk_id=1,
+        staging_page_id=7,
         raw_text="test",
         url="https://coppermind.net/wiki/Test",
         source_title="Test",
@@ -13,6 +14,7 @@ def test_ingestion_row_namedtuple():
         graph_extraction_attempts=0,
     )
     assert row.chunk_id == 1
+    assert row.staging_page_id == 7
     assert row.raw_text == "test"
     assert row.url == "https://coppermind.net/wiki/Test"
     assert row.source_title == "Test"

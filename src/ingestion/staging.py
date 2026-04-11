@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 from src.db.connection import get_staging_conn
 
@@ -13,9 +14,36 @@ PAGES_FILE = CRAWL_DATA_DIR / "pages.jsonl"
 GRAPH_FILE = CRAWL_DATA_DIR / "graph_edges.jsonl"
 ENTITIES_FILE = CRAWL_DATA_DIR / "entities.jsonl"
 RELATIONS_FILE = CRAWL_DATA_DIR / "relations.jsonl"
+MD_DIR = CRAWL_DATA_DIR / "markdown"
 
 
-def stage_pages() -> int:
+def _slug_from_url(url: str) -> str:
+    slug = urlparse(url).path.split("/")[-1] or "index"
+    return slug.replace("%", "-").replace(":", "-").replace("/", "_")
+
+
+def _extract_markdown_payload(md_text: str) -> tuple[str, str]:
+    lines = md_text.splitlines()
+    if not lines:
+        return "", md_text
+
+    title = lines[0].lstrip("# ").strip()
+    body_lines: list[str] = []
+    in_body = False
+    for line in lines[1:]:
+        if line.startswith("---"):
+            break
+        if not in_body and not line.strip():
+            in_body = True
+            continue
+        if in_body:
+            body_lines.append(line)
+
+    body = "\n".join(body_lines).strip()
+    return title, body or md_text
+
+
+def stage_pages(limit: int | None = None) -> int:
     count = 0
     if not PAGES_FILE.exists():
         log.warning("No pages file found at %s", PAGES_FILE)
@@ -37,13 +65,15 @@ def stage_pages() -> int:
                 (url, title, text),
             )
             count += 1
+            if limit is not None and count >= limit:
+                break
         conn.commit()
 
     log.info("Staged %d pages", count)
     return count
 
 
-def stage_edges() -> int:
+def stage_edges(limit: int | None = None) -> int:
     count = 0
     if not GRAPH_FILE.exists():
         log.warning("No graph file found at %s", GRAPH_FILE)
@@ -68,6 +98,8 @@ def stage_edges() -> int:
                 (from_url, to_url),
             )
             count += 1
+            if limit is not None and count >= limit:
+                break
         conn.commit()
 
     log.info("Staged %d edges", count)
@@ -130,25 +162,74 @@ def stage_entity_edges(relations_data: list[dict]) -> int:
     return count
 
 
-def load_staging_to_ingestion() -> int:
+def load_staging_to_ingestion(limit: int | None = None) -> int:
     from src.db.connection import get_staging_conn, get_ingestion_queue_conn
 
     count = 0
     with get_staging_conn() as staging, get_ingestion_queue_conn() as queue:
-        rows = staging.execute(
-            "SELECT page_id, url, title, text FROM staging_pages WHERE status = 'PENDING' ORDER BY page_id"
-        ).fetchall()
-        for row in rows:
+        query = "SELECT page_id FROM staging_pages WHERE status = 'PENDING' ORDER BY page_id"
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        cursor = staging.execute(query, params)
+        for row in cursor:
             queue.execute(
                 """
-                INSERT OR IGNORE INTO ingestion_queue (raw_text, url, source_title, status)
-                VALUES (?, ?, ?, 'PENDING')
+                INSERT OR IGNORE INTO ingestion_queue (staging_page_id, status)
+                VALUES (?, 'PENDING')
                 """,
-                (row["text"], row["url"], row["title"] or ""),
+                (row["page_id"],),
             )
             count += 1
         queue.commit()
     log.info("Loaded %d pages to ingestion queue", count)
+    return count
+
+
+def load_crawl_database_to_ingestion(limit: int | None = None) -> int:
+    from src.db.connection import get_crawl_conn, get_ingestion_queue_conn
+
+    count = 0
+    with get_crawl_conn() as crawl, get_staging_conn() as staging, get_ingestion_queue_conn() as queue:
+        query = "SELECT url FROM crawl_state WHERE status = 'VISITED' ORDER BY visited_at, url"
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        cursor = crawl.execute(query, params)
+        for row in cursor:
+            url = row["url"]
+            markdown_path = MD_DIR / f"{_slug_from_url(url)}.md"
+            if not markdown_path.exists():
+                log.warning("Missing markdown for %s at %s", url, markdown_path)
+                continue
+            title, raw_text = _extract_markdown_payload(markdown_path.read_text(encoding="utf-8"))
+            staging.execute(
+                """
+                INSERT OR IGNORE INTO staging_pages (url, title, text, status)
+                VALUES (?, ?, ?, 'PENDING')
+                """,
+                (url, title, raw_text),
+            )
+            page_row = staging.execute(
+                "SELECT page_id FROM staging_pages WHERE url = ?",
+                (url,),
+            ).fetchone()
+            if page_row is None:
+                continue
+            queue.execute(
+                """
+                INSERT OR IGNORE INTO ingestion_queue (staging_page_id, status)
+                VALUES (?, 'PENDING')
+                """,
+                (page_row["page_id"],),
+            )
+            count += 1
+        staging.commit()
+        queue.commit()
+
+    log.info("Loaded %d crawl-db pages to ingestion queue", count)
     return count
 
 

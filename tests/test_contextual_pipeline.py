@@ -24,8 +24,8 @@ def test_build_contextual_chunks_uses_generated_context(monkeypatch):
 
     monkeypatch.setattr(
         pipeline,
-        "chunk_text",
-        lambda text, chunk_size=1000, chunk_overlap=200: ["chunk one", "chunk two"],
+        "iter_chunk_text",
+        lambda text, chunk_size=1000, chunk_overlap=200: iter(["chunk one", "chunk two"]),
     )
     monkeypatch.setattr(
         pipeline,

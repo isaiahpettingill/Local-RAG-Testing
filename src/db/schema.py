@@ -56,7 +56,8 @@ def create_ingestion_queue_schema() -> None:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ingestion_queue (
                 chunk_id INTEGER PRIMARY KEY,
-                raw_text TEXT NOT NULL,
+                staging_page_id INTEGER,
+                raw_text TEXT NOT NULL DEFAULT '',
                 url TEXT,
                 source_title TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'PENDING',
@@ -66,7 +67,23 @@ def create_ingestion_queue_schema() -> None:
             )
         """)
         _ensure_columns(
-            conn, "ingestion_queue", {"source_title": "TEXT NOT NULL DEFAULT ''"}
+            conn,
+            "ingestion_queue",
+            {
+                "staging_page_id": "INTEGER",
+                "raw_text": "TEXT NOT NULL DEFAULT ''",
+                "url": "TEXT",
+                "source_title": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ingestion_queue_status_chunk ON ingestion_queue(status, chunk_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ingestion_queue_staging_page_id ON ingestion_queue(staging_page_id)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingestion_queue_unique_staging_page ON ingestion_queue(staging_page_id) WHERE staging_page_id IS NOT NULL"
         )
         conn.commit()
 

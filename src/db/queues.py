@@ -7,6 +7,7 @@ from src.db.connection import get_ingestion_queue_conn, get_eval_queue_conn
 
 class IngestionRow(NamedTuple):
     chunk_id: int
+    staging_page_id: int | None
     raw_text: str
     url: str | None
     source_title: str
@@ -31,19 +32,47 @@ class EvalRow(NamedTuple):
 
 
 def claim_pending_ingestion() -> IngestionRow | None:
-    with get_ingestion_queue_conn() as conn:
-        row = conn.execute(
-            "SELECT chunk_id, raw_text, url, source_title, status, graph_extraction_attempts "
+    with get_ingestion_queue_conn() as queue_conn:
+        row = queue_conn.execute(
+            "SELECT chunk_id, staging_page_id, status, graph_extraction_attempts "
             "FROM ingestion_queue WHERE status = 'PENDING' ORDER BY chunk_id LIMIT 1"
         ).fetchone()
         if row is None:
             return None
-        conn.execute(
+
+        queue_conn.execute(
             "UPDATE ingestion_queue SET status = 'PROCESSING', updated_at = CURRENT_TIMESTAMP WHERE chunk_id = ?",
             (row["chunk_id"],),
         )
-        conn.commit()
-        return IngestionRow(**row)
+        queue_conn.commit()
+
+    staging_page_id = row["staging_page_id"]
+    raw_text = ""
+    url: str | None = None
+    source_title = ""
+
+    if staging_page_id is not None:
+        from src.db.connection import get_staging_conn
+
+        with get_staging_conn() as staging_conn:
+            page_row = staging_conn.execute(
+                "SELECT text, url, title FROM staging_pages WHERE page_id = ?",
+                (staging_page_id,),
+            ).fetchone()
+            if page_row is not None:
+                raw_text = page_row["text"] or ""
+                url = page_row["url"]
+                source_title = page_row["title"] or ""
+
+    return IngestionRow(
+        chunk_id=row["chunk_id"],
+        staging_page_id=staging_page_id,
+        raw_text=raw_text,
+        url=url,
+        source_title=source_title,
+        status=row["status"],
+        graph_extraction_attempts=row["graph_extraction_attempts"],
+    )
 
 
 def mark_ingestion_completed(chunk_id: int) -> None:

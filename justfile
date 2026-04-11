@@ -8,6 +8,10 @@ default:
 ingest:
     uv run python cli.py --phase ingest
 
+# Vector-only ingestion (skip graph extraction)
+ingest-vector:
+    uv run python cli.py --phase ingest --no-graph
+
 # Crawl web pages
 crawl:
     uv run python cli.py --phase crawl

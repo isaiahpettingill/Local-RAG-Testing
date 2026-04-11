@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
-from src.ingestion.chunking import chunk_text
-from src.ingestion.embed import embed_query
+from src.ingestion.chunking import iter_chunk_text
 from src.ingestion.graph_extract import extract_graph
+from src.ingestion.embed import embed_query
 from src.ingestion.ladybug_graph import get_entity_relationships as _relationships
 from src.ingestion.ladybug_graph import insert_graph_data
 from src.ingestion.staging import get_outgoing_links
@@ -70,7 +70,7 @@ def _generate_chunk_context(
     document_text: str,
     title: str,
     url: str,
-    chunk_text: str,
+    chunk_text_value: str,
     chunk_index: int,
     total_chunks: int,
 ) -> str:
@@ -78,7 +78,7 @@ def _generate_chunk_context(
         document_text=document_text,
         title=title,
         url=url,
-        chunk_text=chunk_text,
+        chunk_text=chunk_text_value,
         chunk_index=chunk_index,
         total_chunks=total_chunks,
     )
@@ -91,6 +91,48 @@ def _generate_chunk_context(
         return _fallback_context(title, url, chunk_index, total_chunks)
 
 
+def iter_contextual_chunks(
+    text: str,
+    title: str = "",
+    url: str = "",
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+) -> Iterator[ContextualChunk]:
+    total_chunks = sum(
+        1
+        for _ in iter_chunk_text(
+            text,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+    )
+    document_excerpt = text[:6000]
+    for index, raw_chunk in enumerate(
+        iter_chunk_text(
+            text,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+    ):
+        context = _generate_chunk_context(
+            document_excerpt,
+            title,
+            url,
+            raw_chunk,
+            index,
+            total_chunks,
+        )
+        contextual_text = f"{context}\n\n{raw_chunk}".strip()
+        yield ContextualChunk(
+            chunk_index=index,
+            raw_text=raw_chunk,
+            context=context,
+            contextual_text=contextual_text,
+            source_url=url,
+            source_title=title,
+        )
+
+
 def build_contextual_chunks(
     text: str,
     title: str = "",
@@ -98,30 +140,15 @@ def build_contextual_chunks(
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
 ) -> list[ContextualChunk]:
-    raw_chunks = chunk_text(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    total_chunks = len(raw_chunks)
-    contextual_chunks: list[ContextualChunk] = []
-    for index, raw_chunk in enumerate(raw_chunks):
-        context = _generate_chunk_context(
-            document_text=text,
+    return list(
+        iter_contextual_chunks(
+            text,
             title=title,
             url=url,
-            chunk_text=raw_chunk,
-            chunk_index=index,
-            total_chunks=total_chunks,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
         )
-        contextual_text = f"{context}\n\n{raw_chunk}".strip()
-        contextual_chunks.append(
-            ContextualChunk(
-                chunk_index=index,
-                raw_text=raw_chunk,
-                context=context,
-                contextual_text=contextual_text,
-                source_url=url,
-                source_title=title,
-            )
-        )
-    return contextual_chunks
+    )
 
 
 def _format_result(result: Any, index: int) -> str:
@@ -172,16 +199,14 @@ def get_entity_relationships(entity_name: str, limit: int = 5) -> str:
     return _relationships(entity_name, limit)
 
 
-def ingest_row(row: Any) -> None:
+def ingest_row(row: Any, graph_enabled: bool = True) -> None:
     title = getattr(row, "source_title", "") or ""
     url = getattr(row, "url", "") or ""
     raw_text = getattr(row, "raw_text", "") or ""
-    existing_relationships = _relationships(title or url or raw_text[:80], limit=5)
-    chunks = build_contextual_chunks(raw_text, title=title, url=url)
     outgoing_links = get_outgoing_links(url) if url else []
-    for chunk in chunks:
+    for chunk in iter_contextual_chunks(raw_text, title=title, url=url):
         vector = embed_query(chunk.contextual_text)
-        chunk_id = insert_chunk(
+        insert_chunk(
             text=chunk.contextual_text,
             vector=vector,
             url=url,
@@ -190,6 +215,10 @@ def ingest_row(row: Any) -> None:
             raw_text=chunk.raw_text,
             context=chunk.context,
         )
+        if not graph_enabled:
+            continue
+        existing_relationships = _relationships(title or url or raw_text[:80], limit=5)
+
         graph = extract_graph(
             chunk.contextual_text,
             title=title,
@@ -202,5 +231,5 @@ def ingest_row(row: Any) -> None:
             graph,
             source_url=url,
             source_title=title,
-            chunk_id=chunk_id,
+            chunk_id=chunk.chunk_index + 1,
         )

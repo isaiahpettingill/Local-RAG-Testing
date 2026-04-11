@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import logging
+import resource
 
 import click
+
+def set_ram_limit(limit_gb: float) -> None:
+    bytes_limit = int(limit_gb * 1024 * 1024 * 1024)
+    resource.setrlimit(resource.RLIMIT_AS, (bytes_limit, bytes_limit))
+    log.info(f"Set RAM limit to {limit_gb} GB")
 
 from src.db.schema import init_all_schemas
 from src.db.queues import (
@@ -37,6 +43,9 @@ log = logging.getLogger(__name__)
 @click.option("--dry-run", is_flag=True, default=False)
 @click.option("--limit", type=int, default=None)
 @click.option("--start-path", default="/wiki/Main_Page")
+@click.option("--crawl-data-only", is_flag=True, default=False)
+@click.option("--no-graph", is_flag=True, default=False)
+@click.option("--ram-cap", type=float, default=None, help="RAM limit in GB")
 def main(
     phase: str,
     batch_size: int,
@@ -44,7 +53,13 @@ def main(
     dry_run: bool,
     limit: int | None,
     start_path: str,
+    crawl_data_only: bool,
+    no_graph: bool,
+    ram_cap: float | None,
 ) -> None:
+    if ram_cap:
+        set_ram_limit(ram_cap)
+
     if model_path:
         from src.models.config import MODELS
 
@@ -55,7 +70,7 @@ def main(
     log.info("Initialized all schemas")
 
     if phase == "ingest":
-        run_ingestion_loop(batch_size, dry_run)
+        run_ingestion_loop(batch_size, dry_run, no_graph)
     elif phase == "eval":
         run_eval_loop(batch_size, dry_run)
     elif phase == "grade":
@@ -68,42 +83,44 @@ def main(
         from src.ingestion.staging import (
             stage_pages,
             stage_edges,
+            load_crawl_database_to_ingestion,
             load_staging_to_ingestion,
         )
 
-        stage_pages()
-        stage_edges()
-        load_staging_to_ingestion()
+        stage_pages(limit if crawl_data_only else None)
+        stage_edges(limit if crawl_data_only else None)
+        if crawl_data_only:
+            load_crawl_database_to_ingestion(limit)
+        else:
+            load_staging_to_ingestion(limit)
     elif phase == "extract":
         run_entity_extraction_loop(batch_size, dry_run)
 
 
-def run_ingestion_loop(batch_size: int, dry_run: bool) -> None:
+def run_ingestion_loop(batch_size: int, dry_run: bool, no_graph: bool) -> None:
     log.info("Starting ingestion loop")
     while True:
-        rows = []
+        processed = 0
         for _ in range(max(1, batch_size)):
             row = claim_pending_ingestion()
             if row is None:
                 break
-            rows.append(row)
-
-        if not rows:
-            log.info("No pending ingestion jobs")
-            break
-
-        for row in rows:
+            processed += 1
             log.info(f"Processing chunk_id={row.chunk_id}")
             if dry_run:
                 mark_ingestion_completed(row.chunk_id)
                 continue
             try:
-                ingest_row(row)
+                ingest_row(row, graph_enabled=not no_graph)
                 mark_ingestion_completed(row.chunk_id)
                 log.info(f"Completed chunk_id={row.chunk_id}")
             except Exception as e:
                 log.error(f"Error processing chunk_id={row.chunk_id}: {e}")
                 mark_ingestion_error(row.chunk_id, row.graph_extraction_attempts + 1)
+
+        if processed == 0:
+            log.info("No pending ingestion jobs")
+            break
 
 
 def run_eval_loop(batch_size: int, dry_run: bool) -> None:
@@ -168,7 +185,7 @@ def run_grade_loop(batch_size: int, dry_run: bool) -> None:
 
 def run_entity_extraction_loop(batch_size: int, dry_run: bool) -> None:
     log.info("Legacy extract phase now routes through contextual ingestion")
-    run_ingestion_loop(batch_size, dry_run)
+    run_ingestion_loop(batch_size, dry_run, True)
 
 
 def mark_page_extracted(page_id: int) -> None:
